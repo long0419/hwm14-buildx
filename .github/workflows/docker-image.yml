@@ -58,7 +58,7 @@ jobs:
           path: hwm14-linux-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 2) Windows: x64（带运行时 DLL）
+  # 2) Windows: x64（带运行时 DLL，data 目录中有 hwm123114.bin）
   # ================================
   build-windows-cli:
     name: Build Windows CLI (x64)
@@ -92,15 +92,28 @@ jobs:
         run: |
           $version = "${{ env.VERSION }}"
 
+          # 找到 gfortran 所在目录
           $gcc = (Get-Command x86_64-w64-mingw32-gfortran).Source
           $mingwBin = Split-Path $gcc
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item build\hwm14test.exe dist\hwm14.exe
+
+          # 复制 Fortran 运行时 DLL（有就带上）
           Copy-Item "$mingwBin\libgfortran-5.dll" dist\ -ErrorAction SilentlyContinue
           Copy-Item "$mingwBin\libquadmath-0.dll" dist\ -ErrorAction SilentlyContinue
           Copy-Item "$mingwBin\libgcc_s_seh-1.dll" dist\ -ErrorAction SilentlyContinue
+
+          # 数据文件目录（这里面有 hwm123114.bin / dwm07b104i.dat / gd2qd.dat）
           Copy-Item data dist\data -Recurse
+
+          # 可选：生成一个运行脚本，自动设置 HWMPATH
+          @"
+          @echo off
+          setlocal
+          set HWMPATH=%~dp0data
+          "%~dp0hwm14.exe" %*
+          "@ | Out-File -Encoding ASCII dist\run-hwm14.cmd
 
           tar.exe -czvf "hwm14-windows-x64-$version.tar.gz" -C dist .
 
@@ -111,7 +124,7 @@ jobs:
           path: hwm14-windows-x64-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 3) macOS: Intel + Apple Silicon
+  # 3) macOS: Intel + Apple Silicon（打包 .dylib）
   # ================================
   build-macos-cli:
     name: Build macOS CLI for ${{ matrix.arch }}
@@ -119,9 +132,9 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: macos-15-intel   # Intel runner 新名字
+            runner: macos-15-intel   # Intel
           - arch: arm64
-            runner: macos-latest     # 现在是 macOS 15 ARM64
+            runner: macos-latest     # Apple Silicon
 
     runs-on: ${{ matrix.runner }}
     env:
@@ -138,7 +151,6 @@ jobs:
           brew update
           brew install gcc cmake
 
-      # 关键：自动探测 gfortran 的真实名字和路径，写到 $FC
       - name: Detect gfortran
         run: |
           set -e
@@ -146,10 +158,8 @@ jobs:
           if command -v gfortran >/dev/null 2>&1; then
             fc_bin=$(command -v gfortran)
           else
-            # 有些 runner 上只有 gfortran-14 / gfortran-13 之类的名字
             fc_bin=$(ls "$(brew --prefix)"/bin/gfortran-* | head -n 1)
           fi
-
           echo "Use Fortran compiler: $fc_bin"
           echo "FC=$fc_bin" >> $GITHUB_ENV
 
@@ -159,12 +169,29 @@ jobs:
           cmake -B build -S . -DCMAKE_Fortran_COMPILER="$FC"
           cmake --build build --config Release
 
-      - name: Package macOS CLI
+      - name: Bundle Fortran runtime & package macOS CLI
         run: |
           mkdir -p dist
           cp build/hwm14test dist/hwm14
           chmod +x dist/hwm14
           cp -R data dist/data
+
+          echo "Before fix:"
+          otool -L dist/hwm14 || true
+
+          # 把依赖的 Fortran dylib 拷贝到 dist，并把路径改成 @loader_path/xxx.dylib
+          for lib in libgfortran libquadmath libgcc_s; do
+            path=$(otool -L dist/hwm14 | awk "/$lib/ {print \$1; exit}")
+            if [ -n "$path" ]; then
+              echo "Bundling $path"
+              cp "$path" "dist/$(basename "$path")"
+              install_name_tool -change "$path" "@loader_path/$(basename "$path")" dist/hwm14
+            fi
+          done
+
+          echo "After fix:"
+          otool -L dist/hwm14 || true
+
           cd dist
           tar czf "../hwm14-macos-${{ matrix.arch }}-${VERSION}.tar.gz" .
 
@@ -173,7 +200,6 @@ jobs:
         with:
           name: hwm14-macos-${{ matrix.arch }}
           path: hwm14-macos-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
-
 
   # ================================
   # 4) 创建 Release，并把所有 tar.gz 挂上去
@@ -205,20 +231,19 @@ jobs:
             - macOS x86_64 (Intel)
             - macOS arm64 (Apple Silicon)
 
-            Linux 解压后使用示例：
+            Linux / macOS 解压后使用示例：
 
                 export HWMPATH=./data
                 ./hwm14 <lat> <lon> <alt_km> <year>
 
-            macOS 解压后使用示例：
+            Windows 解压后使用示例（推荐使用 run-hwm14.cmd）：
 
-                export HWMPATH=./data
-                ./hwm14 <lat> <lon> <alt_km> <year>
+                run-hwm14.cmd <lat> <lon> <alt_km> <year>
 
-            Windows 解压后使用示例（PowerShell）：
+            或手动设置：
 
-                $env:HWMPATH = ".\data"
-                .\hwm14.exe <lat> <lon> <alt_km> <year>
+                set HWMPATH=%CD%\data
+                hwm14.exe <lat> <lon> <alt_km> <year>
           files: |
             build_artifacts/**/*
         env:
