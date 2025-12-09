@@ -189,7 +189,6 @@ jobs:
           cd dist
           tar czf "../hwm14-macos-${{ matrix.arch }}-${VERSION}.tar.gz" .
 
-
       - uses: actions/upload-artifact@v4
         with:
           name: hwm14-macos-${{ matrix.arch }}
@@ -217,10 +216,11 @@ jobs:
             HWM14 CLI Release (${{ env.VERSION }})
 
             用法：
-                hwm14 <lat> <lon> <alt_km> <year> <doy> <ut_seconds>
+                hwm14 <lat> <lon> <alt_km> <doy> <ut_seconds> [ap]
 
-            示例：
-                ./run-hwm14.sh 30 120 80 2020 95 36000
+            示例（AP = 4.0）：
+                ./run-hwm14.sh 30 120 80 95 36000
+
           files: |
             artifacts/**/*.tar.gz
         env:
