@@ -1,7 +1,7 @@
 # NRL HWM14 Horizontal Wind Model
 
 [![Actions Status](https://github.com/gemini3d/hwm14/workflows/ci/badge.svg)](https://github.com/gemini3d/hwm14/actions)
-
+[![Release & Publish Docker Image](https://github.com/long0419/hwm14-buildx/actions/workflows/docker-image.yml/badge.svg?branch=main)](https://github.com/long0419/hwm14-buildx/actions/workflows/docker-image.yml)
 
 Build "build/libhwm14.*" by:
 
