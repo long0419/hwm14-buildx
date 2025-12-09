@@ -2,8 +2,7 @@ name: Release & Publish Docker Image
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches: [ main ]
 
 jobs:
   release:
