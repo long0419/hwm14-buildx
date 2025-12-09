@@ -1,10 +1,12 @@
 name: Release HWM14 CLI (Linux + Windows)
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'        # 例如 v1.0.0
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release 版本号，例如 v1.0.0"
+        required: true
+        default: "v1.0.0"
 
 jobs:
   # ================================
@@ -21,6 +23,8 @@ jobs:
             runner: ubuntu-22.04-arm     # ARM64（public 仓库可用）
 
     runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ github.event.inputs.version }}
 
     steps:
       - name: Checkout
@@ -40,7 +44,6 @@ jobs:
 
       - name: Package Linux CLI
         run: |
-          VERSION=${{ github.ref_name }}
           mkdir -p dist
           # 可执行文件
           cp build/hwm14test dist/hwm14
@@ -54,14 +57,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: hwm14-linux-${{ matrix.arch }}
-          path: hwm14-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz
+          path: hwm14-linux-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 2) Windows CLI（x86_64）
+  # 2) Windows CLI（x86_64），连同 gfortran 的 DLL 一起打包
   # ================================
   build-windows-cli:
     name: Build Windows CLI (x64)
     runs-on: windows-latest
+    env:
+      VERSION: ${{ github.event.inputs.version }}
 
     steps:
       - name: Checkout
@@ -85,20 +90,30 @@ jobs:
           cmake -G "Unix Makefiles" -DCMAKE_Fortran_COMPILER=x86_64-w64-mingw32-gfortran ..
           make
 
-      - name: Package Windows CLI (x64)
+      # 关键：把运行时 DLL 一起拷进 dist，避免提示找不到 libgfortran-5.dll
+      - name: Copy runtime DLLs & package
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}"
+          $version = "${{ env.VERSION }}"
+
+          # 找到 mingw gfortran 所在目录
+          $gcc = (Get-Command x86_64-w64-mingw32-gfortran).Source
+          $mingwBin = Split-Path $gcc
+
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item build\hwm14test.exe dist\hwm14.exe
+          Copy-Item "$mingwBin\libgfortran-5.dll" dist\ -ErrorAction SilentlyContinue
+          Copy-Item "$mingwBin\libquadmath-0.dll" dist\ -ErrorAction SilentlyContinue
+          Copy-Item "$mingwBin\libgcc_s_seh-1.dll" dist\ -ErrorAction SilentlyContinue
           Copy-Item data dist\data -Recurse
-          & tar.exe -czvf "hwm14-windows-x64-$version.tar.gz" -C dist .
+
+          tar.exe -czvf "hwm14-windows-x64-$version.tar.gz" -C dist .
 
       - name: Upload Windows x64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: hwm14-windows-x64
-          path: hwm14-windows-x64-${{ github.ref_name }}.tar.gz
+          path: hwm14-windows-x64-${{ env.VERSION }}.tar.gz
 
   # ================================
   # 3) 创建 Release，并把所有 tar.gz 挂上去
@@ -106,6 +121,8 @@ jobs:
   release:
     needs: [build-linux-cli, build-windows-cli]
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.event.inputs.version }}
 
     steps:
       - name: Download all artifacts
@@ -116,10 +133,10 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: ${{ env.VERSION }}
+          name: ${{ env.VERSION }}
           body: |
-            HWM14 CLI Release ${{ github.ref_name }}
+            HWM14 CLI Release ${{ env.VERSION }}
 
             提供三个 CLI 平台版本：
             - Linux amd64
@@ -135,7 +152,6 @@ jobs:
 
                 $env:HWMPATH = ".\data"
                 .\hwm14.exe <lat> <lon> <alt_km> <year>
-
           files: |
             build_artifacts/**/*
         env:
