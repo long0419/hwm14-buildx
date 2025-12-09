@@ -162,6 +162,22 @@ jobs:
           chmod +x dist/hwm14
           cp -r data dist/data
 
+          echo "Before fix:"
+          otool -L dist/hwm14 || true
+
+          # 把依赖的 Fortran 动态库打包进 dist，并改成相对路径 @loader_path/xxx
+          for lib in libgfortran libquadmath libgcc_s; do
+            path=$(otool -L dist/hwm14 | awk "/$lib/ {print \$1; exit}")
+            if [ -n "$path" ]; then
+              echo "Bundling $path"
+              cp "$path" "dist/$(basename "$path")"
+              install_name_tool -change "$path" "@loader_path/$(basename "$path")" dist/hwm14
+            fi
+          done
+
+          echo "After fix:"
+          otool -L dist/hwm14 || true
+
           cat > dist/run-hwm14.sh << 'EOF'
           #!/usr/bin/env bash
           DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -172,6 +188,7 @@ jobs:
 
           cd dist
           tar czf "../hwm14-macos-${{ matrix.arch }}-${VERSION}.tar.gz" .
+
 
       - uses: actions/upload-artifact@v4
         with:
