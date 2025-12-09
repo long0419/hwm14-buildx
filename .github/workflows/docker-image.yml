@@ -1,4 +1,4 @@
-name: Release HWM14 CLI (Linux + Windows)
+name: Release HWM14 CLI (Linux + Windows + macOS)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
 
 jobs:
   # ================================
-  # 1) 为 linux/amd64 和 linux/arm64 各编译一个 CLI
+  # 1) Linux: amd64 + arm64
   # ================================
   build-linux-cli:
     name: Build Linux CLI for ${{ matrix.arch }}
@@ -45,10 +45,8 @@ jobs:
       - name: Package Linux CLI
         run: |
           mkdir -p dist
-          # 可执行文件
           cp build/hwm14test dist/hwm14
           chmod +x dist/hwm14
-          # 数据文件
           cp -r data dist/data
           cd dist
           tar czf "../hwm14-linux-${{ matrix.arch }}-${VERSION}.tar.gz" .
@@ -60,7 +58,7 @@ jobs:
           path: hwm14-linux-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 2) Windows CLI（x86_64），连同 gfortran 的 DLL 一起打包
+  # 2) Windows: x64（带运行时 DLL）
   # ================================
   build-windows-cli:
     name: Build Windows CLI (x64)
@@ -72,7 +70,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 安装 MSYS2 + gfortran + cmake
       - name: Install MSYS2 & gfortran
         uses: msys2/setup-msys2@v2
         with:
@@ -90,13 +87,11 @@ jobs:
           cmake -G "Unix Makefiles" -DCMAKE_Fortran_COMPILER=x86_64-w64-mingw32-gfortran ..
           make
 
-      # 关键：把运行时 DLL 一起拷进 dist，避免提示找不到 libgfortran-5.dll
       - name: Copy runtime DLLs & package
         shell: pwsh
         run: |
           $version = "${{ env.VERSION }}"
 
-          # 找到 mingw gfortran 所在目录
           $gcc = (Get-Command x86_64-w64-mingw32-gfortran).Source
           $mingwBin = Split-Path $gcc
 
@@ -116,10 +111,61 @@ jobs:
           path: hwm14-windows-x64-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 3) 创建 Release，并把所有 tar.gz 挂上去
+  # 3) macOS: Intel + Apple Silicon
+  # ================================
+  build-macos-cli:
+    name: Build macOS CLI for ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-13        # Intel
+          - arch: arm64
+            runner: macos-14        # Apple Silicon
+
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ github.event.inputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install deps (Homebrew gcc + cmake)
+        run: |
+          brew update
+          brew install gcc cmake
+          which gfortran || which gfortran-14 || true
+
+      - name: Configure & build
+        env:
+          FC: gfortran
+        run: |
+          cmake -B build -S .
+          cmake --build build --config Release
+
+      - name: Package macOS CLI
+        run: |
+          mkdir -p dist
+          cp build/hwm14test dist/hwm14
+          chmod +x dist/hwm14
+          cp -R data dist/data
+          cd dist
+          tar czf "../hwm14-macos-${{ matrix.arch }}-${VERSION}.tar.gz" .
+
+      - name: Upload macOS CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hwm14-macos-${{ matrix.arch }}
+          path: hwm14-macos-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
+
+  # ================================
+  # 4) 创建 Release，并把所有 tar.gz 挂上去
   # ================================
   release:
-    needs: [build-linux-cli, build-windows-cli]
+    needs: [build-linux-cli, build-windows-cli, build-macos-cli]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ github.event.inputs.version }}
@@ -138,12 +184,19 @@ jobs:
           body: |
             HWM14 CLI Release ${{ env.VERSION }}
 
-            提供三个 CLI 平台版本：
+            提供平台版本：
             - Linux amd64
             - Linux arm64
             - Windows x64
+            - macOS x86_64 (Intel)
+            - macOS arm64 (Apple Silicon)
 
             Linux 解压后使用示例：
+
+                export HWMPATH=./data
+                ./hwm14 <lat> <lon> <alt_km> <year>
+
+            macOS 解压后使用示例：
 
                 export HWMPATH=./data
                 ./hwm14 <lat> <lon> <alt_km> <year>
