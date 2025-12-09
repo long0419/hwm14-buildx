@@ -48,8 +48,18 @@ jobs:
           cp build/hwm14test dist/hwm14
           chmod +x dist/hwm14
           cp -r data dist/data
-          cd dist
-          tar czf "../hwm14-linux-${{ matrix.arch }}-${VERSION}.tar.gz" .
+
+          # 启动脚本：自动设置 HWMPATH=./data
+          cat > dist/run-hwm14.sh << 'EOF'
+          #!/usr/bin/env bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          export HWMPATH="$DIR/data"
+          exec "$DIR/hwm14" "$@"
+          EOF
+                    chmod +x dist/run-hwm14.sh
+
+                    cd dist
+                    tar czf "../hwm14-linux-${{ matrix.arch }}-${VERSION}.tar.gz" .
 
       - name: Upload Linux CLI artifact
         uses: actions/upload-artifact@v4
@@ -58,7 +68,7 @@ jobs:
           path: hwm14-linux-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 2) Windows: x64（带运行时 DLL，data 目录中有 hwm123114.bin）
+  # 2) Windows: x64（带运行时 DLL + run-hwm14.cmd）
   # ================================
   build-windows-cli:
     name: Build Windows CLI (x64)
@@ -99,15 +109,15 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item build\hwm14test.exe dist\hwm14.exe
 
-          # 复制 Fortran 运行时 DLL（有就带上）
+          # Fortran 运行时 DLL（有就带上）
           Copy-Item "$mingwBin\libgfortran-5.dll" dist\ -ErrorAction SilentlyContinue
           Copy-Item "$mingwBin\libquadmath-0.dll" dist\ -ErrorAction SilentlyContinue
           Copy-Item "$mingwBin\libgcc_s_seh-1.dll" dist\ -ErrorAction SilentlyContinue
 
-          # 数据文件目录（这里面有 hwm123114.bin / dwm07b104i.dat / gd2qd.dat）
+          # 数据目录（包含 hwm123114.bin 等）
           Copy-Item data dist\data -Recurse
 
-          # 可选：生成一个运行脚本，自动设置 HWMPATH
+          # 启动脚本：自动设置 HWMPATH=.\data
           @"
           @echo off
           setlocal
@@ -124,7 +134,7 @@ jobs:
           path: hwm14-windows-x64-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 3) macOS: Intel + Apple Silicon（打包 .dylib）
+  # 3) macOS: Intel + Apple Silicon（打包 Fortran dylib + run-hwm14.sh）
   # ================================
   build-macos-cli:
     name: Build macOS CLI for ${{ matrix.arch }}
@@ -192,6 +202,15 @@ jobs:
           echo "After fix:"
           otool -L dist/hwm14 || true
 
+          # 启动脚本：自动设置 HWMPATH=./data
+          cat > dist/run-hwm14.sh << 'EOF'
+          #!/usr/bin/env bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          export HWMPATH="$DIR/data"
+          exec "$DIR/hwm14" "$@"
+          EOF
+          chmod +x dist/run-hwm14.sh
+
           cd dist
           tar czf "../hwm14-macos-${{ matrix.arch }}-${VERSION}.tar.gz" .
 
@@ -231,19 +250,14 @@ jobs:
             - macOS x86_64 (Intel)
             - macOS arm64 (Apple Silicon)
 
-            Linux / macOS 解压后使用示例：
+            Linux / macOS（推荐）：
 
-                export HWMPATH=./data
-                ./hwm14 <lat> <lon> <alt_km> <year>
+                ./run-hwm14.sh <lat> <lon> <alt_km> <year>
 
-            Windows 解压后使用示例（推荐使用 run-hwm14.cmd）：
+            Windows（推荐）：
 
                 run-hwm14.cmd <lat> <lon> <alt_km> <year>
 
-            或手动设置：
-
-                set HWMPATH=%CD%\data
-                hwm14.exe <lat> <lon> <alt_km> <year>
           files: |
             build_artifacts/**/*
         env:
