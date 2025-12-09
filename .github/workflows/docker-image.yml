@@ -137,13 +137,26 @@ jobs:
         run: |
           brew update
           brew install gcc cmake
-          which gfortran || which gfortran-14 || true
+
+      # 关键：自动探测 gfortran 的真实名字和路径，写到 $FC
+      - name: Detect gfortran
+        run: |
+          set -e
+          echo "Looking for gfortran..."
+          if command -v gfortran >/dev/null 2>&1; then
+            fc_bin=$(command -v gfortran)
+          else
+            # 有些 runner 上只有 gfortran-14 / gfortran-13 之类的名字
+            fc_bin=$(ls "$(brew --prefix)"/bin/gfortran-* | head -n 1)
+          fi
+
+          echo "Use Fortran compiler: $fc_bin"
+          echo "FC=$fc_bin" >> $GITHUB_ENV
 
       - name: Configure & build
-        env:
-          FC: gfortran
         run: |
-          cmake -B build -S .
+          echo "FC is: $FC"
+          cmake -B build -S . -DCMAKE_Fortran_COMPILER="$FC"
           cmake --build build --config Release
 
       - name: Package macOS CLI
@@ -160,6 +173,7 @@ jobs:
         with:
           name: hwm14-macos-${{ matrix.arch }}
           path: hwm14-macos-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
+
 
   # ================================
   # 4) 创建 Release，并把所有 tar.gz 挂上去
