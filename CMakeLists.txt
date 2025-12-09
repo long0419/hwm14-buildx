@@ -11,8 +11,8 @@ if(NOT is_multi_config AND NOT (CMAKE_BUILD_TYPE OR DEFINED ENV{CMAKE_BUILD_TYPE
 endif()
 
 project(hwm14
-LANGUAGES Fortran
-VERSION 1.2.5
+  LANGUAGES Fortran
+  VERSION 1.2.5
 )
 
 enable_testing()
@@ -22,23 +22,25 @@ include(cmake/compilers.cmake)
 
 file(GENERATE OUTPUT .gitignore CONTENT "*")
 
-# to make more usable by external programs, put all Fortran .mod generated module files in a single directory.
+# 所有 Fortran 模块放一个目录
 set(CMAKE_Fortran_MODULE_DIRECTORY ${PROJECT_BINARY_DIR}/include)
 file(MAKE_DIRECTORY ${CMAKE_Fortran_MODULE_DIRECTORY})
-# avoid race condition in parent projects
 
-# --- hwm14 library
+# ----------------------------
+# hwm14 库
+# ----------------------------
 add_library(hwm14 src/hwm14.f90)
+
 target_include_directories(hwm14 PUBLIC
-$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
-$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-# suppress large amounts of warnings with modern compilers
+
 target_compile_options(hwm14 PRIVATE -w)
 
 target_compile_definitions(hwm14 INTERFACE
-$<BUILD_INTERFACE:DATADIR="${CMAKE_CURRENT_SOURCE_DIR}/data/">
-$<INSTALL_INTERFACE:DATADIR="${CMAKE_INSTALL_PREFIX}/share/data/${PROJECT_NAME}/">
+  $<BUILD_INTERFACE:DATADIR="${CMAKE_CURRENT_SOURCE_DIR}/data/">
+  $<INSTALL_INTERFACE:DATADIR="${CMAKE_INSTALL_PREFIX}/share/data/${PROJECT_NAME}/">
 )
 
 set(RESOURCE_FILES data/dwm07b104i.dat data/gd2qd.dat data/hwm123114.bin)
@@ -46,32 +48,46 @@ set(RESOURCE_FILES data/dwm07b104i.dat data/gd2qd.dat data/hwm123114.bin)
 install(TARGETS hwm14 EXPORT ${PROJECT_NAME}-targets)
 
 install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/
-TYPE INCLUDE
-FILES_MATCHING PATTERN "*.mod"
-)
-install(FILES ${RESOURCE_FILES}
-DESTINATION share/data/${PROJECT_NAME}
-)
+        TYPE INCLUDE
+        FILES_MATCHING PATTERN "*.mod")
 
-# --- hwm14 interface
+install(FILES ${RESOURCE_FILES}
+        DESTINATION share/data/${PROJECT_NAME})
+
+# ----------------------------
+# hwm14 接口库（你已有）
+# ----------------------------
 add_library(hwm_ifc src/hwm_interface.f90)
 target_link_libraries(hwm_ifc PRIVATE hwm14)
+
 target_include_directories(hwm_ifc PUBLIC
-$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
-$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 install(TARGETS hwm_ifc EXPORT ${PROJECT_NAME}-targets)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/hwm_interface.mod
-TYPE INCLUDE
-)
-
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/hwm_interface.mod TYPE INCLUDE)
 
 add_library(hwm14::hwm_ifc INTERFACE IMPORTED GLOBAL)
 target_link_libraries(hwm14::hwm_ifc INTERFACE hwm_ifc)
 
-# --- tests
+# ----------------------------
+# ⭐ 新增：命令行版本 HWM14 (hwm14_cli)
+# ----------------------------
+add_executable(hwm14_cli src/hwm14_cli.f90)
 
+# 链接接口库（它已经链接 hwm14）
+target_link_libraries(hwm14_cli PRIVATE hwm14::hwm_ifc)
+
+target_include_directories(hwm14_cli PRIVATE
+  ${CMAKE_CURRENT_BINARY_DIR}/include
+)
+
+install(TARGETS hwm14_cli EXPORT ${PROJECT_NAME}-targets)
+
+# ----------------------------
+# Tests (如不需要可关掉)
+# ----------------------------
 if(hwm14_BUILD_TESTING)
   add_executable(hwm14check test/checkhwm14.f90)
   target_link_libraries(hwm14check PRIVATE hwm14)
