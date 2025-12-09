@@ -1,4 +1,4 @@
-name: Release & Publish HWM14 (CLI + Docker)
+name: Release HWM14 CLI (Linux + Windows)
 
 on:
   push:
@@ -10,8 +10,8 @@ jobs:
   # ================================
   # 1) 为 linux/amd64 和 linux/arm64 各编译一个 CLI
   # ================================
-  build-cli:
-    name: Build CLI for ${{ matrix.arch }}
+  build-linux-cli:
+    name: Build Linux CLI for ${{ matrix.arch }}
     strategy:
       matrix:
         include:
@@ -38,9 +38,9 @@ jobs:
           cmake -B build -S .
           cmake --build build --config Release
 
-      - name: Package CLI
+      - name: Package Linux CLI
         run: |
-          VERSION=${GITHUB_REF##*/}
+          VERSION=${{ github.ref_name }}
           mkdir -p dist
           # 可执行文件
           cp build/hwm14test dist/hwm14
@@ -50,14 +50,14 @@ jobs:
           cd dist
           tar czf "../hwm14-linux-${{ matrix.arch }}-${VERSION}.tar.gz" .
 
-      - name: Upload CLI artifact
+      - name: Upload Linux CLI artifact
         uses: actions/upload-artifact@v4
         with:
           name: hwm14-linux-${{ matrix.arch }}
           path: hwm14-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz
 
   # ================================
-  # 1.5) Windows CLI（x86_64）
+  # 2) Windows CLI（x86_64）
   # ================================
   build-windows-cli:
     name: Build Windows CLI (x64)
@@ -101,58 +101,10 @@ jobs:
           path: hwm14-windows-x64-${{ github.ref_name }}.tar.gz
 
   # ================================
-  # 【可选模板】Windows ARM64（需要你配置 self-hosted runner）
-  # ================================
-  # build-windows-arm64-cli:
-  #   name: Build Windows CLI (ARM64)
-  #   runs-on: windows-arm64   # 这里假设你之后自己挂一个 self-hosted，标签叫 windows-arm64
-  #
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-  #
-  #     # 下面和 x64 的 msys2 流程类似，只是用 aarch64 对应的工具链
-  #     # ...
-
-  # ================================
-  # 2) 构建 & 推送 Docker 多架构镜像
-  # ================================
-  build-docker:
-    needs: build-cli
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and Push Multi-Arch Docker Image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: |
-            mileworks/hwm14:latest
-            mileworks/hwm14:${{ github.ref_name }}
-
-  # ================================
   # 3) 创建 Release，并把所有 tar.gz 挂上去
   # ================================
   release:
-    needs: [build-cli, build-windows-cli, build-docker]
+    needs: [build-linux-cli, build-windows-cli]
     runs-on: ubuntu-latest
 
     steps:
@@ -167,26 +119,23 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           body: |
-            HWM14 Release ${{ github.ref_name }}
+            HWM14 CLI Release ${{ github.ref_name }}
 
             提供三个 CLI 平台版本：
             - Linux amd64
             - Linux arm64
             - Windows x64
 
-            解压后使用示例（Linux）：
+            Linux 解压后使用示例：
 
                 export HWMPATH=./data
                 ./hwm14 <lat> <lon> <alt_km> <year>
 
-            解压后使用示例（Windows PowerShell）：
+            Windows 解压后使用示例（PowerShell）：
 
                 $env:HWMPATH = ".\data"
                 .\hwm14.exe <lat> <lon> <alt_km> <year>
 
-            同时发布 Docker 镜像：
-            - mileworks/hwm14:${{ github.ref_name }}
-            - mileworks/hwm14:latest
           files: |
             build_artifacts/**/*
         env:
