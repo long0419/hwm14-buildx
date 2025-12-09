@@ -159,25 +159,24 @@ jobs:
       - name: Install deps
         run: |
           brew update
-          brew install gcc cmake
+          brew install cmake gcc@14
 
       - name: Detect gfortran
         run: |
           echo "== Detecting gfortran =="
 
-          # 1) 优先使用 Homebrew gcc (始终存在单一版本)
-          BREW_FC=$(brew --prefix)/bin/gfortran
-          if [ -x "$BREW_FC" ]; then
-            echo "Found Homebrew gfortran: $BREW_FC"
-            echo "FC=$BREW_FC" >> $GITHUB_ENV
+          if [ -x "/opt/homebrew/bin/gfortran-14" ]; then
+            echo "FC=/opt/homebrew/bin/gfortran-14" >> $GITHUB_ENV
             exit 0
           fi
 
-          # 2) 其次检查 PATH
+          if [ -x "/usr/local/bin/gfortran-14" ]; then
+            echo "FC=/usr/local/bin/gfortran-14" >> $GITHUB_ENV
+            exit 0
+          fi
+
           if command -v gfortran >/dev/null 2>&1; then
-            PATH_FC=$(command -v gfortran)
-            echo "Using PATH gfortran: $PATH_FC"
-            echo "FC=$PATH_FC" >> $GITHUB_ENV
+            echo "FC=$(command -v gfortran)" >> $GITHUB_ENV
             exit 0
           fi
 
@@ -189,42 +188,6 @@ jobs:
           cmake -B build -S . -DCMAKE_Fortran_COMPILER="$FC"
           cmake --build build --config Release
 
-      - name: Package macOS CLI
-        run: |
-          mkdir -p dist
-
-          # ★★ 使用真正 CLI
-          cp build/hwm14_cli dist/hwm14
-          chmod +x dist/hwm14
-
-          cp -R data dist/data
-
-          # 复制依赖库
-          for lib in libgfortran libquadmath libgcc_s; do
-            path=$(otool -L dist/hwm14 | awk "/$lib/ {print \$1; exit}")
-            if [ -n "$path" ]; then
-              cp "$path" "dist/$(basename "$path")"
-              install_name_tool -change "$path" "@loader_path/$(basename "$path")" dist/hwm14
-            fi
-          done
-
-          # 启动脚本
-          cat > dist/run-hwm14.sh << 'EOF'
-          #!/usr/bin/env bash
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          export HWMPATH="$DIR/data"
-          exec "$DIR/hwm14" "$@"
-          EOF
-          chmod +x dist/run-hwm14.sh
-
-          cd dist
-          tar czf "../hwm14-macos-${{ matrix.arch }}-${VERSION}.tar.gz" .
-
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: hwm14-macos-${{ matrix.arch }}
-          path: hwm14-macos-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
 
   # ================================
   # 4) Release
