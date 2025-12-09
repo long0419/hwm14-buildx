@@ -29,11 +29,24 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential gfortran cmake
+          sudo apt-get install -y \
+            build-essential \
+            gfortran \
+            cmake
 
-      - name: Configure & build
+      - name: Configure & build (static for amd64, normal for arm64)
         run: |
-          cmake -B build -S .
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            echo ">> Building STATIC amd64 binary"
+            cmake -B build -S . \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libgfortran"
+          else
+            echo ">> Building normal arm64 binary"
+            cmake -B build -S . \
+              -DCMAKE_BUILD_TYPE=Release
+          fi
+
           cmake --build build --config Release
 
       - name: Package Linux CLI
