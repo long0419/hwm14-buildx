@@ -9,32 +9,27 @@ on:
         default: "v1.0.0"
 
 jobs:
-  # ================================
+  # ==========================================================
   # 1) Linux: amd64 + arm64
-  # ================================
+  # ==========================================================
   build-linux-cli:
-    name: Build Linux CLI for ${{ matrix.arch }}
+    name: Build Linux CLI (${{ matrix.arch }})
     strategy:
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-22.04-arm
+        arch: [amd64, arm64]
 
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.arch == 'amd64' && 'ubuntu-latest' || 'ubuntu-22.04-arm' }}
+
     env:
       VERSION: ${{ github.event.inputs.version }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install deps (Homebrew gcc + cmake)
+      - name: Install deps
         run: |
-          brew update
-          brew install cmake gcc@14
-
+          sudo apt-get update
+          sudo apt-get install -y build-essential gfortran cmake
 
       - name: Configure & build
         run: |
@@ -44,15 +39,10 @@ jobs:
       - name: Package Linux CLI
         run: |
           mkdir -p dist
-
-          # ★★ 使用真正支持传参的 CLI
           cp build/hwm14_cli dist/hwm14
           chmod +x dist/hwm14
-
-          # data 目录
           cp -r data dist/data
 
-          # 启动脚本
           cat > dist/run-hwm14.sh << 'EOF'
           #!/usr/bin/env bash
           DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -64,27 +54,23 @@ jobs:
           cd dist
           tar czf "../hwm14-linux-${{ matrix.arch }}-${VERSION}.tar.gz" .
 
-      - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: hwm14-linux-${{ matrix.arch }}
           path: hwm14-linux-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
 
-  # ================================
+  # ==========================================================
   # 2) Windows x64
-  # ================================
+  # ==========================================================
   build-windows-cli:
-    name: Build Windows CLI (x64)
     runs-on: windows-latest
     env:
       VERSION: ${{ github.event.inputs.version }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install MSYS2 + gfortran
-        uses: msys2/setup-msys2@v2
+      - uses: msys2/setup-msys2@v2
         with:
           update: true
           install: >-
@@ -92,7 +78,7 @@ jobs:
             mingw-w64-x86_64-cmake
             make
 
-      - name: Configure & build (MinGW)
+      - name: Build (MinGW)
         shell: msys2 {0}
         run: |
           mkdir -p build
@@ -100,26 +86,22 @@ jobs:
           cmake -G "Unix Makefiles" -DCMAKE_Fortran_COMPILER=x86_64-w64-mingw32-gfortran ..
           make
 
-      - name: Prepare release files
+      - name: Package Windows CLI
         shell: pwsh
         run: |
           $version = "${{ env.VERSION }}"
-          $mingwBin = Split-Path (Get-Command x86_64-w64-mingw32-gfortran).Source
 
+          $mingwBin = Split-Path (Get-Command x86_64-w64-mingw32-gfortran).Source
           New-Item -ItemType Directory -Force -Path dist | Out-Null
 
-          # ★★ 使用真正 CLI（不是 hwm14test.exe）
-          Copy-Item build\hwm14_cli.exe dist\hwm14.exe
+          Copy-Item build\hwm14_cli.exe dist\hwm14.exe -ErrorAction Stop
 
-          # DLLs
           Copy-Item "$mingwBin\libgfortran-5.dll" dist\ -ErrorAction SilentlyContinue
           Copy-Item "$mingwBin\libquadmath-0.dll" dist\ -ErrorAction SilentlyContinue
           Copy-Item "$mingwBin\libgcc_s_seh-1.dll" dist\ -ErrorAction SilentlyContinue
 
-          # data
           Copy-Item data dist\data -Recurse
 
-          # 启动脚本
           @"
           @echo off
           setlocal
@@ -129,32 +111,26 @@ jobs:
 
           tar.exe -czvf "hwm14-windows-x64-$version.tar.gz" -C dist .
 
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: hwm14-windows-x64
           path: hwm14-windows-x64-${{ env.VERSION }}.tar.gz
 
-  # ================================
-  # 3) macOS: Intel + ARM
-  # ================================
+  # ==========================================================
+  # 3) macOS Intel + ARM
+  # ==========================================================
   build-macos-cli:
-    name: Build macOS CLI for ${{ matrix.arch }}
+    name: Build macOS CLI (${{ matrix.arch }})
     strategy:
       matrix:
-        include:
-          - arch: x86_64
-            runner: macos-15-intel
-          - arch: arm64
-            runner: macos-latest
+        arch: [x86_64, arm64]
 
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.arch == 'x86_64' && 'macos-15-intel' || 'macos-latest' }}
     env:
       VERSION: ${{ github.event.inputs.version }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install deps
         run: |
@@ -163,35 +139,48 @@ jobs:
 
       - name: Detect gfortran
         run: |
-          echo "== Detecting gfortran =="
-
           if [ -x "/opt/homebrew/bin/gfortran-14" ]; then
             echo "FC=/opt/homebrew/bin/gfortran-14" >> $GITHUB_ENV
-            exit 0
-          fi
-
-          if [ -x "/usr/local/bin/gfortran-14" ]; then
+          elif [ -x "/usr/local/bin/gfortran-14" ]; then
             echo "FC=/usr/local/bin/gfortran-14" >> $GITHUB_ENV
-            exit 0
-          fi
-
-          if command -v gfortran >/dev/null 2>&1; then
+          elif command -v gfortran >/dev/null; then
             echo "FC=$(command -v gfortran)" >> $GITHUB_ENV
-            exit 0
+          else
+            echo "::error::No gfortran compiler found"
+            exit 1
           fi
-
-          echo "::error::No gfortran compiler found."
-          exit 1
 
       - name: Configure & build
         run: |
           cmake -B build -S . -DCMAKE_Fortran_COMPILER="$FC"
           cmake --build build --config Release
 
+      - name: Package macOS CLI
+        run: |
+          mkdir -p dist
+          cp build/hwm14_cli dist/hwm14
+          chmod +x dist/hwm14
+          cp -r data dist/data
 
-  # ================================
+          cat > dist/run-hwm14.sh << 'EOF'
+          #!/usr/bin/env bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          export HWMPATH="$DIR/data"
+          exec "$DIR/hwm14" "$@"
+          EOF
+          chmod +x dist/run-hwm14.sh
+
+          cd dist
+          tar czf "../hwm14-macos-${{ matrix.arch }}-${VERSION}.tar.gz" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hwm14-macos-${{ matrix.arch }}
+          path: hwm14-macos-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
+
+  # ==========================================================
   # 4) Release
-  # ================================
+  # ==========================================================
   release:
     needs: [build-linux-cli, build-windows-cli, build-macos-cli]
     runs-on: ubuntu-latest
@@ -199,30 +188,23 @@ jobs:
       VERSION: ${{ github.event.inputs.version }}
 
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: build_artifacts
+          path: artifacts
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
           name: ${{ env.VERSION }}
           body: |
             HWM14 CLI Release (${{ env.VERSION }})
 
-            Fully functional CLI supporting:
-            - Compute wind from HWM14 model
-            - Input: lat lon alt_km year doy ut_seconds
+            用法：
+                hwm14 <lat> <lon> <alt_km> <year> <doy> <ut_seconds>
 
-            For Linux/macOS:
+            示例：
                 ./run-hwm14.sh 30 120 80 2020 95 36000
-
-            For Windows:
-                run-hwm14.cmd 30 120 80 2020 95 36000
-
           files: |
-            build_artifacts/**/*
+            artifacts/**/*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
