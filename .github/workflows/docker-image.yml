@@ -1,12 +1,25 @@
-name: Release & Publish Docker Image
+name: Release & Publish HWM14 (CLI + Docker)
 
 on:
   push:
-    branches: [ main ]
+    tags:
+      - 'v*.*.*'        # 例如 v1.0.0
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  # ================================
+  # 1) 为 linux/amd64 和 linux/arm64 各编译一个 CLI
+  # ================================
+  build-cli:
+    name: Build CLI for ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest        # x86_64
+          - arch: arm64
+            runner: ubuntu-22.04-arm     # ARM64（public 仓库可用）
+
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout
@@ -14,9 +27,44 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get version from tag
-        id: vars
-        run: echo "VERSION=${GITHUB_REF##*/}" >> "$GITHUB_OUTPUT"
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gfortran cmake
+
+      - name: Configure & build
+        run: |
+          cmake -B build -S .
+          cmake --build build --config Release
+
+      - name: Package CLI
+        run: |
+          VERSION=${GITHUB_REF##*/}
+          mkdir -p dist
+          # 可执行文件
+          cp build/hwm14test dist/hwm14
+          chmod +x dist/hwm14
+          # 数据文件
+          cp -r data dist/data
+          cd dist
+          tar czf "../hwm14-linux-${{ matrix.arch }}-${VERSION}.tar.gz" .
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hwm14-linux-${{ matrix.arch }}
+          path: hwm14-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz
+
+  # ================================
+  # 2) 可选：构建 & 推送 Docker 多架构镜像（如果你还想要）
+  # ================================
+  build-docker:
+    needs: build-cli
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -30,7 +78,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and Push Multi-Arch Image
+      - name: Build and Push Multi-Arch Docker Image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -39,16 +87,42 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: |
             mileworks/hwm14:latest
-            mileworks/hwm14:${{ steps.vars.outputs.VERSION }}
+            mileworks/hwm14:${{ github.ref_name }}
+
+  # ================================
+  # 3) 创建 Release，并把两个 tar.gz 挂上去
+  # ================================
+  release:
+    needs: [build-cli, build-docker]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: build_artifacts
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.vars.outputs.VERSION }}
-          name: ${{ steps.vars.outputs.VERSION }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           body: |
-            Docker image:
-            - `mileworks/hwm14:${{ steps.vars.outputs.VERSION }}`
-            - `mileworks/hwm14:latest`
+            HWM14 Release ${{ github.ref_name }}
+
+            提供两个 CLI 平台版本：
+            - Linux amd64
+            - Linux arm64
+
+            解压后使用示例：
+
+                export HWMPATH=./data
+                ./hwm14 <lat> <lon> <alt_km> <year>
+
+            同时发布 Docker 镜像：
+            - mileworks/hwm14:${{ github.ref_name }}
+            - mileworks/hwm14:latest
+          files: |
+            build_artifacts/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
