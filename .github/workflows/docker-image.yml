@@ -57,7 +57,65 @@ jobs:
           path: hwm14-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz
 
   # ================================
-  # 2) 可选：构建 & 推送 Docker 多架构镜像（如果你还想要）
+  # 1.5) Windows CLI（x86_64）
+  # ================================
+  build-windows-cli:
+    name: Build Windows CLI (x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 安装 MSYS2 + gfortran + cmake
+      - name: Install MSYS2 & gfortran
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc-fortran
+            mingw-w64-x86_64-cmake
+            make
+
+      - name: Configure & build (MinGW)
+        shell: msys2 {0}
+        run: |
+          mkdir -p build
+          cd build
+          cmake -G "Unix Makefiles" -DCMAKE_Fortran_COMPILER=x86_64-w64-mingw32-gfortran ..
+          make
+
+      - name: Package Windows CLI (x64)
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item build\hwm14test.exe dist\hwm14.exe
+          Copy-Item data dist\data -Recurse
+          & tar.exe -czvf "hwm14-windows-x64-$version.tar.gz" -C dist .
+
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hwm14-windows-x64
+          path: hwm14-windows-x64-${{ github.ref_name }}.tar.gz
+
+  # ================================
+  # 【可选模板】Windows ARM64（需要你配置 self-hosted runner）
+  # ================================
+  # build-windows-arm64-cli:
+  #   name: Build Windows CLI (ARM64)
+  #   runs-on: windows-arm64   # 这里假设你之后自己挂一个 self-hosted，标签叫 windows-arm64
+  #
+  #   steps:
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #
+  #     # 下面和 x64 的 msys2 流程类似，只是用 aarch64 对应的工具链
+  #     # ...
+
+  # ================================
+  # 2) 构建 & 推送 Docker 多架构镜像
   # ================================
   build-docker:
     needs: build-cli
@@ -91,10 +149,10 @@ jobs:
             mileworks/hwm14:${{ github.ref_name }}
 
   # ================================
-  # 3) 创建 Release，并把两个 tar.gz 挂上去
+  # 3) 创建 Release，并把所有 tar.gz 挂上去
   # ================================
   release:
-    needs: [build-cli, build-docker]
+    needs: [build-cli, build-windows-cli, build-docker]
     runs-on: ubuntu-latest
 
     steps:
@@ -111,14 +169,20 @@ jobs:
           body: |
             HWM14 Release ${{ github.ref_name }}
 
-            提供两个 CLI 平台版本：
+            提供三个 CLI 平台版本：
             - Linux amd64
             - Linux arm64
+            - Windows x64
 
-            解压后使用示例：
+            解压后使用示例（Linux）：
 
                 export HWMPATH=./data
                 ./hwm14 <lat> <lon> <alt_km> <year>
+
+            解压后使用示例（Windows PowerShell）：
+
+                $env:HWMPATH = ".\data"
+                .\hwm14.exe <lat> <lon> <alt_km> <year>
 
             同时发布 Docker 镜像：
             - mileworks/hwm14:${{ github.ref_name }}
