@@ -18,9 +18,9 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-latest        # x86_64
+            runner: ubuntu-latest
           - arch: arm64
-            runner: ubuntu-22.04-arm     # ARM64（public 仓库可用）
+            runner: ubuntu-22.04-arm
 
     runs-on: ${{ matrix.runner }}
     env:
@@ -29,8 +29,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Install deps
         run: |
@@ -45,30 +43,34 @@ jobs:
       - name: Package Linux CLI
         run: |
           mkdir -p dist
-          cp build/hwm14test dist/hwm14
+
+          # ★★ 使用真正支持传参的 CLI
+          cp build/hwm14_cli dist/hwm14
           chmod +x dist/hwm14
+
+          # data 目录
           cp -r data dist/data
 
-          # 启动脚本：自动设置 HWMPATH=./data
+          # 启动脚本
           cat > dist/run-hwm14.sh << 'EOF'
           #!/usr/bin/env bash
           DIR="$(cd "$(dirname "$0")" && pwd)"
           export HWMPATH="$DIR/data"
           exec "$DIR/hwm14" "$@"
           EOF
-                    chmod +x dist/run-hwm14.sh
+          chmod +x dist/run-hwm14.sh
 
-                    cd dist
-                    tar czf "../hwm14-linux-${{ matrix.arch }}-${VERSION}.tar.gz" .
+          cd dist
+          tar czf "../hwm14-linux-${{ matrix.arch }}-${VERSION}.tar.gz" .
 
-      - name: Upload Linux CLI artifact
+      - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
           name: hwm14-linux-${{ matrix.arch }}
           path: hwm14-linux-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 2) Windows: x64（带运行时 DLL + run-hwm14.cmd）
+  # 2) Windows x64
   # ================================
   build-windows-cli:
     name: Build Windows CLI (x64)
@@ -80,7 +82,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install MSYS2 & gfortran
+      - name: Install MSYS2 + gfortran
         uses: msys2/setup-msys2@v2
         with:
           update: true
@@ -97,27 +99,26 @@ jobs:
           cmake -G "Unix Makefiles" -DCMAKE_Fortran_COMPILER=x86_64-w64-mingw32-gfortran ..
           make
 
-      - name: Copy runtime DLLs & package
+      - name: Prepare release files
         shell: pwsh
         run: |
           $version = "${{ env.VERSION }}"
-
-          # 找到 gfortran 所在目录
-          $gcc = (Get-Command x86_64-w64-mingw32-gfortran).Source
-          $mingwBin = Split-Path $gcc
+          $mingwBin = Split-Path (Get-Command x86_64-w64-mingw32-gfortran).Source
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item build\hwm14test.exe dist\hwm14.exe
 
-          # Fortran 运行时 DLL（有就带上）
+          # ★★ 使用真正 CLI（不是 hwm14test.exe）
+          Copy-Item build\hwm14_cli.exe dist\hwm14.exe
+
+          # DLLs
           Copy-Item "$mingwBin\libgfortran-5.dll" dist\ -ErrorAction SilentlyContinue
           Copy-Item "$mingwBin\libquadmath-0.dll" dist\ -ErrorAction SilentlyContinue
           Copy-Item "$mingwBin\libgcc_s_seh-1.dll" dist\ -ErrorAction SilentlyContinue
 
-          # 数据目录（包含 hwm123114.bin 等）
+          # data
           Copy-Item data dist\data -Recurse
 
-          # 启动脚本：自动设置 HWMPATH=.\data
+          # 启动脚本
           @"
           @echo off
           setlocal
@@ -127,14 +128,14 @@ jobs:
 
           tar.exe -czvf "hwm14-windows-x64-$version.tar.gz" -C dist .
 
-      - name: Upload Windows x64 artifact
+      - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: hwm14-windows-x64
           path: hwm14-windows-x64-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 3) macOS: Intel + Apple Silicon（打包 Fortran dylib + run-hwm14.sh）
+  # 3) macOS: Intel + ARM
   # ================================
   build-macos-cli:
     name: Build macOS CLI for ${{ matrix.arch }}
@@ -142,9 +143,9 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: macos-15-intel   # Intel
+            runner: macos-15-intel
           - arch: arm64
-            runner: macos-latest     # Apple Silicon
+            runner: macos-latest
 
     runs-on: ${{ matrix.runner }}
     env:
@@ -153,56 +154,45 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Install deps (Homebrew gcc + cmake)
+      - name: Install deps
         run: |
           brew update
           brew install gcc cmake
 
       - name: Detect gfortran
         run: |
-          set -e
-          echo "Looking for gfortran..."
           if command -v gfortran >/dev/null 2>&1; then
-            fc_bin=$(command -v gfortran)
+            echo "FC=$(which gfortran)" >> $GITHUB_ENV
           else
-            fc_bin=$(ls "$(brew --prefix)"/bin/gfortran-* | head -n 1)
+            echo "FC=$(ls $(brew --prefix)/bin/gfortran-*)" >> $GITHUB_ENV
           fi
-          echo "Use Fortran compiler: $fc_bin"
-          echo "FC=$fc_bin" >> $GITHUB_ENV
 
       - name: Configure & build
         run: |
-          echo "FC is: $FC"
           cmake -B build -S . -DCMAKE_Fortran_COMPILER="$FC"
           cmake --build build --config Release
 
-      - name: Bundle Fortran runtime & package macOS CLI
+      - name: Package macOS CLI
         run: |
           mkdir -p dist
-          cp build/hwm14test dist/hwm14
+
+          # ★★ 使用真正 CLI
+          cp build/hwm14_cli dist/hwm14
           chmod +x dist/hwm14
+
           cp -R data dist/data
 
-          echo "Before fix:"
-          otool -L dist/hwm14 || true
-
-          # 把依赖的 Fortran dylib 拷贝到 dist，并把路径改成 @loader_path/xxx.dylib
+          # 复制依赖库
           for lib in libgfortran libquadmath libgcc_s; do
             path=$(otool -L dist/hwm14 | awk "/$lib/ {print \$1; exit}")
             if [ -n "$path" ]; then
-              echo "Bundling $path"
               cp "$path" "dist/$(basename "$path")"
               install_name_tool -change "$path" "@loader_path/$(basename "$path")" dist/hwm14
             fi
           done
 
-          echo "After fix:"
-          otool -L dist/hwm14 || true
-
-          # 启动脚本：自动设置 HWMPATH=./data
+          # 启动脚本
           cat > dist/run-hwm14.sh << 'EOF'
           #!/usr/bin/env bash
           DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -214,14 +204,14 @@ jobs:
           cd dist
           tar czf "../hwm14-macos-${{ matrix.arch }}-${VERSION}.tar.gz" .
 
-      - name: Upload macOS CLI artifact
+      - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: hwm14-macos-${{ matrix.arch }}
           path: hwm14-macos-${{ matrix.arch }}-${{ env.VERSION }}.tar.gz
 
   # ================================
-  # 4) 创建 Release，并把所有 tar.gz 挂上去
+  # 4) Release
   # ================================
   release:
     needs: [build-linux-cli, build-windows-cli, build-macos-cli]
@@ -241,22 +231,17 @@ jobs:
           tag_name: ${{ env.VERSION }}
           name: ${{ env.VERSION }}
           body: |
-            HWM14 CLI Release ${{ env.VERSION }}
+            HWM14 CLI Release (${{ env.VERSION }})
 
-            提供平台版本：
-            - Linux amd64
-            - Linux arm64
-            - Windows x64
-            - macOS x86_64 (Intel)
-            - macOS arm64 (Apple Silicon)
+            Fully functional CLI supporting:
+            - Compute wind from HWM14 model
+            - Input: lat lon alt_km year doy ut_seconds
 
-            Linux / macOS（推荐）：
+            For Linux/macOS:
+                ./run-hwm14.sh 30 120 80 2020 95 36000
 
-                ./run-hwm14.sh <lat> <lon> <alt_km> <year>
-
-            Windows（推荐）：
-
-                run-hwm14.cmd <lat> <lon> <alt_km> <year>
+            For Windows:
+                run-hwm14.cmd 30 120 80 2020 95 36000
 
           files: |
             build_artifacts/**/*
