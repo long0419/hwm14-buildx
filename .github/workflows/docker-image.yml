@@ -2,7 +2,8 @@ name: Release & Publish Docker Image
 
 on:
   push:
-    branches: [ main ]
+    tags:
+      - 'v*.*.*'        # 例如 v1.0.0
 
 jobs:
   release:
